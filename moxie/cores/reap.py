@@ -43,14 +43,13 @@ class ReapService(EventService):
 
     @asyncio.coroutine
     def reap(self, job):
-        tries = 0
-        while tries <= MAX_RETRIES:
+        for tries in range(MAX_RETRIES):
             try:
                 container = (yield from self.containers.get(job.name))
+                break
             except ValueError as e:
-                if tries < MAX_RETRIES:
+                if tries < MAX_RETRIES-1:
                     time.sleep(1)
-                    tries += 1
                     continue
                 yield from self.log('error', error=e, job=job.name)
                 runid = yield from self.database.run.create(
