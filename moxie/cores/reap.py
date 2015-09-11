@@ -23,6 +23,8 @@ import asyncio
 import dateutil.parser
 import datetime as dt
 from moxie.models import Job
+from moxie.core import MAX_RETRIES
+import time
 
 
 class ReapService(EventService):
@@ -41,21 +43,27 @@ class ReapService(EventService):
 
     @asyncio.coroutine
     def reap(self, job):
-        try:
-            container = (yield from self.containers.get(job.name))
-        except ValueError as e:
-            yield from self.log('error', error=e, job=job.name)
-            runid = yield from self.database.run.create(
-                failed=True,
-                job_id=job.id,
-                log="moxie internal error. container went MIA.",
-                start_time=dt.datetime.utcnow(),
-                end_time=dt.datetime.utcnow(),
-            )
-            yield from self.database.job.complete(job.name)
-            yield from self.log('punted', job=job.name)
-            yield from self.alert.error(job.name, runid)
-            return
+        tries = 0
+        while tries <= MAX_RETRIES:
+            try:
+                container = (yield from self.containers.get(job.name))
+            except ValueError as e:
+                if tries < MAX_RETRIES:
+                    time.sleep(1)
+                    tries += 1
+                    continue
+                yield from self.log('error', error=e, job=job.name)
+                runid = yield from self.database.run.create(
+                    failed=True,
+                    job_id=job.id,
+                    log="moxie internal error. container went MIA.",
+                    start_time=dt.datetime.utcnow(),
+                    end_time=dt.datetime.utcnow(),
+                )
+                yield from self.database.job.complete(job.name)
+                yield from self.log('punted', job=job.name)
+                yield from self.alert.error(job.name, runid)
+                return
 
         state = container._container.get("State", {})
         running = state.get("Running", False)
